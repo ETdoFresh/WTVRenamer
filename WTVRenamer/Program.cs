@@ -1,4 +1,4 @@
-﻿using Shell32;
+﻿using Microsoft.WindowsAPICodePack.Shell;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -28,55 +28,60 @@ namespace WTVRenamer
         [STAThread]
         static void Main(string[] args)
         {
-            ReadConfiguration();
-
-            Log("----- WTVRenamer Started! --------------------");
-            List<RecordedShow> recordedShows = new List<RecordedShow>();
-            Type shellAppType = Type.GetTypeFromProgID("Shell.Application");
-            Object shell = Activator.CreateInstance(shellAppType);
-            Folder folder = (Folder)shellAppType.InvokeMember("NameSpace", System.Reflection.BindingFlags.InvokeMethod, null, shell, new[] { inputDirectory });
-            FolderItems items = folder.Items();
-            foreach (var item in items)
+            try
             {
-                var show = CreateShow((FolderItem2)item);
-                if (show != null)
-                    recordedShows.Add(show);
+                ReadConfiguration();
 
-                Console.WriteLine(show);
-            }
-
-            foreach (var show in recordedShows)
-                if (show.recommendedFilename != show.originalFilename)
+                Log("----- WTVRenamer Started! --------------------");
+                List<RecordedShow> recordedShows = new List<RecordedShow>();
+                foreach (var item in Directory.GetFiles(inputDirectory, "*.wtv"))
                 {
-                    var from = Path.Combine(inputDirectory, show.originalFilename);
-                    var to = Path.Combine(inputDirectory, show.recommendedFilename);
-                    Log("Renaming from {0} to {1}", from, to);
-                    try { File.Move(from, to); }
-                    catch (Exception ex) { Log("Could not rename {0}: {1}", from, ex.Message); }
+                    var show = CreateShow(item);
+                    if (show != null)
+                        recordedShows.Add(show);
+
+                    Console.WriteLine(show);
                 }
 
-            foreach (var show in recordedShows)
-                if (show.showType == RecordedShow.ShowType.TVSHOW)
-                    if (tvShowDirectory != "." && !string.IsNullOrEmpty(tvShowDirectory))
+                foreach (var show in recordedShows)
+                    if (show.recommendedFilename != show.originalFilename)
                     {
-                        var from = Path.Combine(inputDirectory, show.recommendedFilename);
-                        var to = Path.Combine(tvShowDirectory, show.recommendedFilename);
-                        Log("Moving from {0} to {1}", from, to);
+                        var from = Path.Combine(inputDirectory, show.originalFilename);
+                        var to = Path.Combine(inputDirectory, show.recommendedFilename);
+                        Log("Renaming from {0} to {1}", from, to);
                         try { File.Move(from, to); }
-                        catch (Exception ex) { Log("Could not move {0}: {1}", from, ex.Message); }
-                    }
-                    else { }
-                else if (show.showType == RecordedShow.ShowType.MOVIE)
-                    if (movieDirectory != "." && !string.IsNullOrEmpty(movieDirectory))
-                    {
-                        var from = Path.Combine(inputDirectory, show.recommendedFilename);
-                        var to = Path.Combine(movieDirectory, show.recommendedFilename);
-                        Log("Moving from {0} to {1}", from, to);
-                        try { File.Move(from, to); }
-                        catch (Exception ex) { Log("Could not move {0}: {1}", from, ex.Message); }
+                        catch (Exception ex) { Log("Could not rename {0}: {1}", from, ex.Message); }
                     }
 
-            Log("----- WTVRenamer Ended! ----------------------");
+                foreach (var show in recordedShows)
+                    if (show.showType == RecordedShow.ShowType.TVSHOW)
+                        if (tvShowDirectory != "." && !string.IsNullOrEmpty(tvShowDirectory))
+                        {
+                            var from = Path.Combine(inputDirectory, show.recommendedFilename);
+                            var to = Path.Combine(tvShowDirectory, show.recommendedFilename);
+                            Log("Moving from {0} to {1}", from, to);
+                            try { File.Move(from, to); }
+                            catch (Exception ex) { Log("Could not move {0}: {1}", from, ex.Message); }
+                        }
+                        else { }
+                    else if (show.showType == RecordedShow.ShowType.MOVIE)
+                        if (movieDirectory != "." && !string.IsNullOrEmpty(movieDirectory))
+                        {
+                            var from = Path.Combine(inputDirectory, show.recommendedFilename);
+                            var to = Path.Combine(movieDirectory, show.recommendedFilename);
+                            Log("Moving from {0} to {1}", from, to);
+                            try { File.Move(from, to); }
+                            catch (Exception ex) { Log("Could not move {0}: {1}", from, ex.Message); }
+                        }
+
+                Log("----- WTVRenamer Ended! ----------------------");
+            }
+            catch(Exception ex)
+            {
+                Log(ex.Message);
+                Log(ex.StackTrace);
+                Log("----- WTVRenamer Program Error ----------------------");
+            }
         }
 
         private static void Log(string format, params object[] args)
@@ -110,20 +115,20 @@ movieDirectory: {2}", inputDirectory, tvShowDirectory, movieDirectory));
                 inputDirectory = Directory.GetCurrentDirectory();
         }
 
-        private static RecordedShow CreateShow(FolderItem2 item)
+        private static RecordedShow CreateShow(string path)
         {
-            if (!item.Path.ToLower().EndsWith(".wtv"))
-                return null;
+            var item = ShellFile.FromFilePath(path);
 
             var newShow = new RecordedShow
             {
                 originalFilename = item.Name,
-                seriesName = (string)(item.ExtendedProperty("System.Title")),
-                episodeName = (string)(item.ExtendedProperty("System.RecordedTV.EpisodeName")),
-                description = (string)(item.ExtendedProperty("System.RecordedTV.ProgramDescription")),
-                stationCallSign = (string)(item.ExtendedProperty("System.RecordedTV.StationCallSign"))
+                
+                seriesName = item.Properties.System.Title.Value,
+                episodeName = item.Properties.System.RecordedTV.EpisodeName.Value,
+                description = item.Properties.System.RecordedTV.ProgramDescription.Value,
+                stationCallSign = item.Properties.System.RecordedTV.StationCallSign.Value
             };
-            try { newShow.episodeFirstAired = ((DateTime)(item.ExtendedProperty("System.RecordedTV.OriginalBroadcastDate"))).ToString("yyyy-MM-dd"); } catch { }
+            try { newShow.episodeFirstAired = ((DateTime)item.Properties.System.RecordedTV.OriginalBroadcastDate.Value).ToString("yyyy-MM-dd"); } catch { }
 
             var xml = DownloadSeriesXML(newShow.seriesName);
             var xDoc = XDocument.Parse(xml);
@@ -178,31 +183,35 @@ movieDirectory: {2}", inputDirectory, tvShowDirectory, movieDirectory));
 
                 if (newShow.episodeNumber == null && newShow.seasonNumber == null)
                 {
-                    xml = DownloadAlternateEpisodeXML(newShow);
-                    xDoc = XDocument.Parse(xml);
-
-                    foreach (var episode in xDoc.XPathSelectElements("/Data/Episode"))
+                    try
                     {
-                        if (episode.XPathSelectElement("EpisodeName").Value.ToLower().Equals(newShow.episodeName.ToLower()))
-                        {
-                            newShow.episodeNumber = episode.XPathSelectElement("EpisodeNumber").Value;
-                            newShow.seasonNumber = episode.XPathSelectElement("SeasonNumber").Value;
-                            break;
-                        }
-                    }
+                        xml = DownloadAlternateEpisodeXML(newShow);
+                        xDoc = XDocument.Parse(xml);
 
-                    if (newShow.episodeNumber == null && newShow.seasonNumber == null)
-                    {
                         foreach (var episode in xDoc.XPathSelectElements("/Data/Episode"))
                         {
-                            if (episode.XPathSelectElement("FirstAired").Value.Equals(newShow.episodeFirstAired))
+                            if (episode.XPathSelectElement("EpisodeName").Value.ToLower().Equals(newShow.episodeName.ToLower()))
                             {
                                 newShow.episodeNumber = episode.XPathSelectElement("EpisodeNumber").Value;
                                 newShow.seasonNumber = episode.XPathSelectElement("SeasonNumber").Value;
                                 break;
                             }
                         }
+
+                        if (newShow.episodeNumber == null && newShow.seasonNumber == null)
+                        {
+                            foreach (var episode in xDoc.XPathSelectElements("/Data/Episode"))
+                            {
+                                if (episode.XPathSelectElement("FirstAired").Value.Equals(newShow.episodeFirstAired))
+                                {
+                                    newShow.episodeNumber = episode.XPathSelectElement("EpisodeNumber").Value;
+                                    newShow.seasonNumber = episode.XPathSelectElement("SeasonNumber").Value;
+                                    break;
+                                }
+                            }
+                        }
                     }
+                    catch { Log("Could not download DownloadAlternateEpisodeXML()"); }
                 }
             }
 
@@ -218,6 +227,7 @@ movieDirectory: {2}", inputDirectory, tvShowDirectory, movieDirectory));
         {
             var url = databases[0].baseUrl + databases[0].seriesUrl;
             url = url.Replace("$seriesName", seriesName);
+            Log("DownloadSeriesXML from {0}", url);
             return new WebClient().DownloadString(url);
         }
 
@@ -227,6 +237,7 @@ movieDirectory: {2}", inputDirectory, tvShowDirectory, movieDirectory));
             url = url.Replace("$apikey", recordedShow.apiKey);
             url = url.Replace("$this_series_id", recordedShow.seriesId);
             url = url.Replace("$this_series_lang", recordedShow.language);
+            Log("DownloadEpisodeXML from {0}", url);
             return new WebClient().DownloadString(url);
         }
 
@@ -236,6 +247,7 @@ movieDirectory: {2}", inputDirectory, tvShowDirectory, movieDirectory));
             url = url.Replace("$apikey", recordedShow.apiKey);
             url = url.Replace("$this_series_id", recordedShow.alternateSeriesId);
             url = url.Replace("$this_series_lang", recordedShow.language);
+            Log("DownloadAlternateEpisodeXML from {0}", url);
             return new WebClient().DownloadString(url);
         }
 
